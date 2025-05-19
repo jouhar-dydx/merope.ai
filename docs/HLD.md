@@ -7,10 +7,8 @@ Merope is an autonomous AI-powered system that continuously scans AWS infrastruc
 ##  Architecture Overview
 
 AWS → Scanner → RabbitMQ → Data Processor → Model Engine → NLP Explainer → Alert System
-↘ ↗
-DB Layer
-↘
-→ Dashboard + Monitoring
+↘->DB Layer ↘
+  → Dashboard + Monitoring
 
 
 ##  Core Modules
