@@ -1,21 +1,17 @@
 # Merope – Autonomous Cloud Engineer
 
-An enterprise-grade autonomous AI platform for continuous scanning, anomaly detection, explanation generation, alerting, and learning from AWS environments.
+Merope is an advanced, modular AIOps (Artificial Intelligence for IT Operations) platform engineered to bring intelligent automation, anomaly detection, and explainable diagnostics into cloud operations, with a particular focus on AWS infrastructure. The core idea behind Merope is to enable a self-operating, self-healing, and contextually aware DevSecOps environment that minimizes manual intervention while maximizing system observability and efficiency. Merope is not just a monitoring tool — it is an intelligent assistant that scans AWS services, interprets system behavior, detects abnormal patterns, explains them using human-readable language through NLP (Natural Language Processing), and responds to issues by triggering alert workflows or remediation actions. This provides engineering teams not only with real-time visibility into their cloud ecosystem but also deep insights into "why" something went wrong, not just "what" went wrong.
 
-Built with Docker, Python, RabbitMQ, PostgreSQL, Weaviate, FastAPI, and Jenkins.
+The architecture of Merope is designed around microservices, each encapsulated within Docker containers and communicating asynchronously through a RabbitMQ message broker. This modular design ensures high cohesion and loose coupling, making Merope scalable, resilient, and suitable for continuous deployment. The primary modules include a Scanner Module that continuously audits the AWS environment to detect orphaned or underutilized services, misconfigurations, and security risks. The Scanner gathers metadata and metrics from across multiple AWS regions and services, including EC2, RDS, Lambda, ELB, and others. Once the raw infrastructure data is collected, it is routed via RabbitMQ to the Data Processing Module, which normalizes, enriches, and stores the data in a structured format in a document store like MongoDB, while embeddings and time-series vectors are persisted in a vector database such as Qdrant or Weaviate for advanced search and inference.
 
-Goal: Fully autonomous cloud intelligence at scale.
+Following this, the processed data is consumed by the ML Engine, where models trained on historical patterns and labeled anomalies make intelligent predictions about potential risks or inefficiencies. These models could range from simple supervised classifiers for anomaly detection to unsupervised clustering algorithms that learn the typical behavior of your workloads. An anomaly detected here is not just a data point — it is contextually validated by the NLP Explainer Module, which transforms technical diagnostics into understandable narratives. For instance, instead of simply alerting “high CPU usage on i-09df1...”, Merope might say: “Instance i-09df1 in us-east-1 is showing 93% CPU utilization for over 15 minutes, which is significantly above its historical average during this time window. It is not serving increased user traffic, and there are no recent deployments. This may indicate a stuck background process or a runaway script.” These explanations empower DevOps engineers to respond with confidence and clarity.
 
-See `/docs/` for design docs.
+To complete the operational loop, the Alerting System sends out structured incident reports via integrations like Slack, PagerDuty, email, or even custom webhooks, while optionally triggering automated remediation workflows using tools like AWS Lambda or Systems Manager. All these insights and events are exposed via the API Layer, allowing external dashboards, CLI tools, or other systems to query Merope for logs, metrics, and diagnostic narratives. The Monitoring Layer, potentially visualized through Grafana or a custom React dashboard, presents a real-time view of the entire system’s health, historical anomaly trends, cost optimization opportunities, and AI-generated recommendations.
 
-Each service runs in a lightweight Docker container (amd64).
+What sets Merope apart is its goal to evolve continuously. Over time, it doesn’t just react to anomalies — it learns. It learns the patterns of your infrastructure, the behavior of your services, the cadence of your deployments, and the typical reactions of your team. Merope becomes an intelligent teammate that observes your DevOps rhythms and adjusts its reasoning and alerting accordingly. With fine-tuned feedback loops and retrainable models, the platform becomes increasingly accurate and relevant as it gains more context from your environment.
 
-CI/CD built with Jenkins pipelines.
+In essence, Merope is not just an AIOps platform — it is a long-term cognitive layer for your cloud infrastructure. It brings together automation, observability, and intelligence in a way that allows modern engineering teams to operate at scale without being overwhelmed by alert noise, repetitive diagnostics, or manual investigations. The ultimate vision is for Merope to reduce Mean Time To Detect (MTTD) and Mean Time To Resolution (MTTR), increase infrastructure utilization efficiency, and free up engineers to focus on innovation rather than firefighting.
 
-Monitoring available via Prometheus + Grafana.
 
-ML/NLP components provide explainable decisions.
 
-RBAC via Google SSO.
 
-Folder structure optimized for modularity and scalability.
