@@ -1,17 +1,74 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import logging
+import signal
+from functools import partial
+from shared.rabbitmq_consumer import RabbitMQConsumer
 
-class SimpleServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/healthz':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "healthy", "module": "data_processor"}).encode())
-        else:
-            self.send_response(404)
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("DataProcessor")
+
+# Validate scan message structure
+def validate_scan_data(data):
+    required_fields = ["scan_id", "region", "resource_type", "data", "timestamp"]
+    missing = [field for field in required_fields if field not in data]
+    if missing:
+        logger.warning(f" Missing required fields: {missing}")
+        return False
+    return True
+
+# Process incoming scan data
+def process_message(ch, method, properties, body, logger_instance):
+    try:
+        message = json.loads(body.decode())
+        logger_instance.info(f" Received scan: {message.get('scan_id')}")
+
+        if not validate_scan_data(message):
+            logger_instance.warning(" Invalid scan data format.")
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+
+        # Basic featurization / validation
+        scan_data = message["data"]
+        if "tags" not in scan_data or not scan_data.get("tags"):
+            message["orphaned"] = True
+            logger_instance.warning(f" Resource marked orphaned: {message['scan_id']}")
+
+        # Future ML integration point
+        logger_instance.info(f" Scan processed: {message['scan_id']}")
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    except json.JSONDecodeError as je:
+        logger_instance.error(f" JSON decode error: {je}")
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+    except Exception as e:
+        logger_instance.error(f" Processing failed: {e}")
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+# Graceful shutdown handler
+def graceful_shutdown(signal, frame, consumer):
+    logger.info(" Data Processor shutting down gracefully...")
+    consumer.stop_consuming()
+    exit(0)
 
 if __name__ == "__main__":
-    print("Starting Data Processor Service...")
-    server = HTTPServer(('0.0.0.0', 8080), SimpleServer)
-    server.serve_forever()
+    logger.info(" Starting Data Processor Service...")
+
+    # Initialize RabbitMQ Consumer
+    try:
+        callback = partial(process_message, logger_instance=logger)
+        consumer = RabbitMQConsumer(queue_name="scan_queue", callback=callback)
+    except Exception as e:
+        logger.error(f" Failed to initialize RabbitMQ consumer: {e}")
+        exit(1)
+
+    # Register signal handlers
+    signal.signal(signal.SIGINT, lambda s, f: graceful_shutdown(s, f, consumer))
+    signal.signal(signal.SIGTERM, lambda s, f: graceful_shutdown(s, f, consumer))
+
+    try:
+        logger.info(" Listening for scan messages...")
+        consumer.start_consuming()
+    except Exception as e:
+        logger.error(f" Consumer error: {e}")
+        exit(1)
