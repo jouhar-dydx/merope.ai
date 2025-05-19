@@ -1,0 +1,4 @@
+sqlalchemy>=2.0.23
+psycopg2-binary>=2.9.9
+weaviate-client>=3.28.0
+redis>=4.5.4

@@ -1,0 +1,2 @@
+requests>=2.31.0
+googlechat-sdk>=0.1.0
