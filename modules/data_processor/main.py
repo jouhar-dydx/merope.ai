@@ -3,6 +3,7 @@ import logging
 import signal
 from functools import partial
 from shared.rabbitmq_consumer import RabbitMQConsumer
+import time, os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -50,6 +51,23 @@ def graceful_shutdown(signal, frame, consumer):
     logger.info(" Data Processor shutting down gracefully...")
     consumer.stop_consuming()
     exit(0)
+
+# Set up logger
+logger = logging.getLogger("DataProcessor")
+logger.setLevel(logging.INFO)
+
+log_dir = "/logs/merope"
+os.makedirs(log_dir, exist_ok=True)
+
+log_file = os.path.join(log_dir, "data_processor.log")
+
+file_handler = logging.FileHandler(log_file)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+logger.addHandler(file_handler)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(file_handler.formatter)
+logger.addHandler(console_handler)
 
 if __name__ == "__main__":
     logger.info(" Starting Data Processor Service...")

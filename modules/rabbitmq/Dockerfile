@@ -1,5 +1,5 @@
 # Use stable version of official RabbitMQ image with management plugin
-FROM rabbitmq:alpine
+FROM rabbitmq
 
 # Labels
 LABEL maintainer="jouhar-dydx"

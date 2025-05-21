@@ -1,0 +1,6 @@
+services:
+  - ec2
+  - rds
+  - lambda
+  - iam
+polling_interval_seconds: 900  # 15 minutes
