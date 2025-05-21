@@ -1,5 +1,6 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import logging,os
 
 class SimpleServer(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -10,6 +11,21 @@ class SimpleServer(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"status": "healthy", "module": "alert_system"}).encode())
         else:
             self.send_response(404)
+
+logger = logging.getLogger("AlertSystem")
+logger.setLevel(logging.INFO)
+
+log_dir = "/logs/merope"
+os.makedirs(log_dir, exist_ok=True)
+
+file_handler = logging.FileHandler(os.path.join(log_dir, "alert_system.log"))
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+logger.addHandler(file_handler)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(file_handler.formatter)
+logger.addHandler(console_handler)
+
 
 if __name__ == "__main__":
     print("Starting Alert System Service...")

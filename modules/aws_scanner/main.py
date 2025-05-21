@@ -1,65 +1,58 @@
 import boto3
+import pika
 import json
 import uuid
 import time
+import os
 import logging
 from datetime import datetime
 from botocore.exceptions import ClientError
 
 # Set up logger
-logger = logging.getLogger("EC2Scanner")
+logger = logging.getLogger("MeropeScanner")
 logger.setLevel(logging.INFO)
 
-# Ensure log directories exist (relative to current directory)
-import os
+log_dir = "/logs/merope"
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, "scanner.log")
 
-# Define log paths relative to project root
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # modules/aws_scanner/ec2/../..
-LOG_DIR = os.path.join(PROJECT_ROOT, "logs", "merope")
-SCAN_LOG_DIR = os.path.join(PROJECT_ROOT, "logs", "aws_scans", "ec2")
+file_handler = logging.FileHandler(log_file)
+file_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+file_handler.setFormatter(file_formatter)
+logger.addHandler(file_handler)
 
-os.makedirs(LOG_DIR, exist_ok=True)              # Create logs/merope if not exists
-os.makedirs(SCAN_LOG_DIR, exist_ok=True)          # Create logs/aws_scans/ec2 if not exists
-
-# Add file handler for logging
-log_file_path = os.path.join(LOG_DIR, "scanner.log")
-handler = logging.FileHandler(log_file_path)
-handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-logger.addHandler(handler)
-
-# Add console handler
 console_handler = logging.StreamHandler()
-console_handler.setFormatter(handler.formatter)
+console_handler.setFormatter(file_formatter)
 logger.addHandler(console_handler)
 
 # Custom JSON Encoder to handle datetime objects
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime):
-            return obj.isoformat()  # Convert datetime to ISO string
+            return obj.isoformat()
         elif isinstance(obj, bytes):
-            return obj.decode('utf-8', errors='ignore')  # Handle binary data
+            return obj.decode('utf-8', errors='ignore')
         return super().default(obj)
 
-# Generate unique scan ID
+# Generate scan ID
 def generate_scan_id():
     return f"SCAN-{uuid.uuid4()}-{int(time.time())}"
 
-# Discover active AWS regions
+# Discover active regions
 def get_active_regions(session):
     try:
         ec2_client = session.client('ec2', region_name='us-east-1')
         response = ec2_client.describe_regions()
         return [region['RegionName'] for region in response['Regions']]
     except Exception as e:
-        logger.warning(f"⚠️ Could not fetch active regions: {e}")
+        logger.warning(f" Could not fetch active regions: {e}")
         return ['us-east-1']
 
-# Check if instance is orphaned
+# Check orphaned instance
 def is_orphaned(instance):
     return len(instance.get('Tags', [])) == 0
 
-# Get associated resources (Security Groups, Volumes, ENIs)
+# Get associated resources
 def get_associated_resources(ec2, instance):
     result = {
         "security_groups": [],
@@ -72,7 +65,7 @@ def get_associated_resources(ec2, instance):
         try:
             result['security_groups'] = ec2.describe_security_groups(GroupIds=sg_ids).get('SecurityGroups', [])
         except Exception as e:
-            logger.error(f"🚨 Error fetching security groups: {e}")
+            logger.error(f" Error fetching security groups: {e}")
 
     try:
         result['volumes'] = ec2.describe_volumes(Filters=[{
@@ -80,7 +73,7 @@ def get_associated_resources(ec2, instance):
             'Values': [instance['InstanceId']]
         }]).get('Volumes', [])
     except Exception as e:
-        logger.error(f"🚨 Error fetching volumes: {e}")
+        logger.error(f" Error fetching volumes: {e}")
 
     try:
         result['network_interfaces'] = ec2.describe_network_interfaces(Filters=[{
@@ -88,35 +81,31 @@ def get_associated_resources(ec2, instance):
             'Values': [instance['InstanceId']]
         }]).get('NetworkInterfaces', [])
     except Exception as e:
-        logger.error(f"🚨 Error fetching ENIs: {e}")
+        logger.error(f" Error fetching ENIs: {e}")
 
     return result
 
 # Send message to RabbitMQ
 def send_to_rabbitmq(message):
     try:
-        import pika
-
-        connection = pika.BlockingConnection(pika.ConnectionParameters(
-            host='localhost'
-        ))
+        connection = pika.BlockingConnection(pika.ConnectionParameters(host='merope-rabbit'))
         channel = connection.channel()
         channel.queue_declare(queue='scan_queue', durable=True)
         channel.basic_publish(
             exchange='',
             routing_key='scan_queue',
             body=json.dumps(message, cls=CustomJSONEncoder),
-            properties=pika.BasicProperties(delivery_mode=2),  # Persistent message
+            properties=pika.BasicProperties(delivery_mode=2),
             mandatory=True
         )
         connection.close()
         logger.info(f"[x] Sent EC2 Instance: {message['resource_id']}")
     except Exception as e:
-        logger.error(f"❌ Failed to send to RabbitMQ: {e}")
+        logger.error(f" Failed to send to RabbitMQ: {e}")
 
-# Scan EC2 instances in one region
+# Scan EC2 Instances
 def scan_ec2_instances(session, scan_id, region):
-    logger.info(f"🌍 Scanning EC2 in {region}")
+    logger.info(f" Scanning EC2 in {region}")
     results = []
 
     try:
@@ -126,7 +115,7 @@ def scan_ec2_instances(session, scan_id, region):
 
         for page in page_iterator:
             reservations = page.get('Reservations', [])
-            logger.info(f"📦 Found {len(reservations)} instances in {region}")
+            logger.info(f"Found {len(reservations)} instances in {region}")
 
             for reservation in reservations:
                 for instance in reservation.get('Instances', []):
@@ -150,23 +139,23 @@ def scan_ec2_instances(session, scan_id, region):
                     }
 
                     # Save raw scan to file
-                    scan_log_path = os.path.join(SCAN_LOG_DIR, f"{instance['InstanceId']}.json")
-                    with open(scan_log_path, 'w') as f:
+                    os.makedirs("/logs/aws_scans/ec2", exist_ok=True)
+                    with open(f"/logs/aws_scans/ec2/{instance['InstanceId']}.json", 'w') as f:
                         json.dump(item, f, indent=2, cls=CustomJSONEncoder)
 
                     # Send to RabbitMQ
-                    send_to_rabbitmq(item)
+                    send_to_rabbitmq(message=item)
                     results.append(item)
 
         return results
 
     except ClientError as ce:
-        logger.warning(f"🚫 EC2 not supported in {region}: {ce}")
+        logger.warning(f" EC2 not supported in {region}: {ce}")
         return []
 
 # Main entry point
 if __name__ == "__main__":
-    logger.info("🔌 Initializing AWS Session...")
+    logger.info(" Initializing AWS Session...")
     session = boto3.Session()
     scan_id = generate_scan_id()
     regions = get_active_regions(session)
@@ -174,8 +163,8 @@ if __name__ == "__main__":
     all_results = []
 
     for region in regions:
-        logger.info(f"🔍 Scanning region: {region}")
+        logger.info(f" Scanning region: {region}")
         results = scan_ec2_instances(session, scan_id, region)
         all_results.extend(results)
 
-    logger.info(f"✅ Sent {len(all_results)} running EC2 instances.")
+    logger.info(f" Sent {len(all_results)} running EC2 instances.")
