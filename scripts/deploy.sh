@@ -2,7 +2,6 @@
 
 set -e
 
-# Project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
@@ -11,15 +10,35 @@ cd "$PROJECT_ROOT"
 echo "📁 Creating base directory structure..."
 mkdir -p config/kafka data/zookeeper/data data/kafka/logs logs/services/{scanner,processor,model_engine,notifier,storage} logs/services/scanner/ec2
 
-# --- Rename modules if needed ---
-echo "🧹 Renaming old module folders..."
-mv modules/aws_scanner modules/scanner || true
-mv modules/nlp_explainer modules/explainer || true
-mv modules/alert_system modules/notifier || true
-mv modules/db_layer modules/storage || true
+# --- Rename old module folders safely ---
+echo "🧹 Renaming old module folders if they exist..."
 
-# Ensure new module folders exist
-mkdir -p modules/processor modules/model_engine modules/shared modules/explainer modules/storage
+if [ -d "modules/aws_scanner" ]; then
+    mv modules/aws_scanner modules/scanner || true
+else
+    echo "⚠️ modules/aws_scanner does not exist – skipping"
+fi
+
+if [ -d "modules/nlp_explainer" ]; then
+    mv modules/nlp_explainer modules/explainer || true
+else
+    echo "⚠️ modules/nlp_explainer does not exist – skipping"
+fi
+
+if [ -d "modules/alert_system" ]; then
+    mv modules/alert_system modules/notifier || true
+else
+    echo "⚠️ modules/alert_system does not exist – skipping"
+fi
+
+if [ -d "modules/db_layer" ]; then
+    mv modules/db_layer modules/storage || true
+else
+    echo "⚠️ modules/db_layer does not exist – skipping"
+fi
+
+# Ensure new folders exist
+mkdir -p modules/processor modules/model_engine modules/explainer modules/storage modules/shared
 
 # --- Write shared utilities ---
 cat > modules/shared/logger.py << 'EOL'
@@ -110,7 +129,7 @@ class ScanMessage:
         return json.dumps(self.__dict__)
 EOL
 
-# --- Write config files ---
+# --- Write configs ---
 cat > config/aws_scanner.yaml << EOL
 scan_id: "SCAN-{uuid}-{timestamp}"
 regions: auto
@@ -144,208 +163,67 @@ message.max.bytes=20971520
 replica.fetch.wait.max.ms=10000
 EOL
 
-# --- Write Dockerfiles ---
-
+# --- Dockerfile.zookeeper ---
 cat > docker/Dockerfile.zookeeper << 'EOL'
 FROM zookeeper:3.9.2
 
 LABEL maintainer="Merope Team <dev@merope.com>"
 LABEL version="1.0"
 
-# Copy config
 COPY ../config/kafka/zookeeper.properties /conf/zoo.cfg
 
-# Create data dir with proper ownership
 RUN mkdir -p /bitnami/zookeeper/data && \
     chown -R zookeeper:zookeeper /bitnami/zookeeper/data
 
-# Set env vars
 ENV ZOOKEEPER_CLIENT_PORT=2181
 ENV ZOOKEEPER_DATA_DIR=/bitnami/zookeeper/data
 EOL
 
+# --- Dockerfile.kafka ---
 cat > docker/Dockerfile.kafka << 'EOL'
 FROM ubuntu/kafka:latest
 
 LABEL maintainer="Merope Team <dev@merope.com>"
 LABEL version="1.0"
 
-# Copy custom Kafka properties
 COPY ../config/kafka/server.properties /writable/config/server.properties
 
-# Create log dir with proper ownership
 RUN mkdir -p /bitnami/kafka/logs && \
     chown -R 1001:1001 /bitnami/kafka/logs
 
-# Set environment variables
 ENV KAFKA_CFG_PROCESS_ROLES="broker"
 ENV KAFKA_CFG_CONTROLLER_LISTENER_NAMES="CONTROLLER"
 ENV KAFKA_CFG_LISTENERS="PLAINTEXT://:9092"
 ENV KAFKA_CFG_ADVERTISED_LISTENERS="PLAINTEXT://kafka:9092"
-ENV KAFKA_CFG_ZOOKEEPER_CONNECT="zookeeper:2181"
+ENV KAFKA_CFG_ZOOKEEPER_CONNECT="merope-zookeeper:2181"
 ENV KAFKA_CFG_LOG_DIRS="/bitnami/kafka/logs"
 EOL
 
-# --- Go-based EC2 Scanner Dockerfile ---
+# --- Dockerfile.scanner ---
 cat > modules/scanner/Dockerfile.go << 'EOL'
 FROM golang:1.21
 
 WORKDIR /app
 
-# Install required tools
+# Install required system packages
 RUN apt-get update && \
-    apt-get install -y git && \
+    apt-get install -y git gcc && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy source code
 COPY . .
 
-# Build binary
-RUN go mod init merope-scanner && \
+# Only run 'go mod init' if go.mod doesn't exist
+RUN if [ ! -f go.mod ]; then \
+        go mod init merope-scanner; \
+    fi && \
     go mod tidy && \
     CGO_ENABLED=0 go build -o /scanner ec2_scanner.go
 
 CMD ["/scanner"]
 EOL
 
-# --- Python-based Data Processor Dockerfile ---
-cat > modules/processor/Dockerfile << 'EOL'
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends build-essential && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "main.py"]
-EOL
-
-cat > modules/processor/main.py << 'EOL'
-from shared.kafka_utils import start_kafka_consumer
-
-def process_message(value):
-    print(f"[📥] Raw message: {value}")
-
-start_kafka_consumer("aws_scan_data", process_message)
-EOL
-
-cat > modules/processor/requirements.txt << EOL
-confluent-kafka>=2.3.0
-protobuf>=4.21.12
-pandas>=2.2.0
-numpy>=1.26.4
-EOL
-
-# --- Python-based Model Engine Dockerfile ---
-cat > modules/model_engine/Dockerfile << 'EOL'
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends build-essential && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "main.py"]
-EOL
-
-cat > modules/model_engine/main.py << 'EOL'
-from shared.kafka_utils import start_kafka_consumer
-from sklearn.ensemble import IsolationForest
-import numpy as np
-
-def analyze(message):
-    scores = IsolationForest(n_estimators=100).score_samples([[len(m.get("Tags", []))] for m in message])
-    for i, score in enumerate(scores):
-        if score < -0.5:
-            print(f"🚩 Anomaly: {message[i]['resource_id']} | Score: {score}")
-
-start_kafka_consumer("processed_data", analyze)
-EOL
-
-cat > modules/model_engine/requirements.txt << EOL
-scikit-learn>=1.4.0
-confluent-kafka>=2.3.0
-EOL
-
-# --- Python-based Notifier Dockerfile ---
-cat > modules/notifier/Dockerfile << 'EOL'
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends build-essential && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "main.py"]
-EOL
-
-cat > modules/notifier/main.py << 'EOL'
-from shared.kafka_utils import start_kafka_consumer
-
-def alert(message):
-    print(f"🔔 Alert sent: {message}")
-
-start_kafka_consumer("model_output", alert)
-EOL
-
-cat > modules/notifier/requirements.txt << EOL
-requests>=2.32.0
-confluent-kafka>=2.3.0
-EOL
-
-# --- Python-based Storage Layer Dockerfile ---
-cat > modules/storage/Dockerfile << 'EOL'
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends build-essential && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-CMD ["python", "main.py"]
-EOL
-
-cat > modules/storage/main.py << 'EOL'
-from shared.kafka_utils import start_kafka_consumer
-
-def persist_message(message):
-    print(f"[💾] Saving to DB: {message}")
-
-start_kafka_consumer("aws_scan_data", persist_message)
-EOL
-
-cat > modules/storage/requirements.txt << EOL
-psycopg2-binary>=2.9.9
-redis>=4.6.0
-confluent-kafka>=2.3.0
-EOL
-
-# --- Go-based EC2 Scanner Source Code ---
+# --- ec2_scanner.go ---
 cat > modules/scanner/ec2_scanner.go << 'EOL'
 package main
 
@@ -426,7 +304,7 @@ func scanEC2Instances(scanID string) ([]Instance, error) {
                     Data:            instanceMap,
                     Orphaned:        isOrphaned(instanceMap),
                     PublicIP:        instance.PublicIpAddress != nil,
-                    MissingMetadata: map[string]bool{"tags_missing": instance.Tags == nil || len(instance.Tags) == 0},
+                    MissingMetadata: map[string]bool{"tags_missing": isOrphaned(instanceMap)},
                     AssociatedResources: map[string]interface{}{
                         "security_groups": instance.SecurityGroups,
                         "vpc_id":        instance.VpcId,
@@ -440,7 +318,6 @@ func scanEC2Instances(scanID string) ([]Instance, error) {
         }
     }
 
-    log.Printf("📦 Found %d running EC2 instances\n", len(results))
     return results, nil
 }
 
@@ -459,6 +336,7 @@ func sendToKafka(item Instance) {
 
     jsonData, _ := json.Marshal(item)
     deliveryChan := make(chan kafka.Event)
+
     err = p.Produce(&kafka.Message{
         TopicPartition: kafka.TopicPartition{Topic: "aws_scan_data", Partition: kafka.PartitionAny},
         Key:            []byte(item.ID),
@@ -489,6 +367,8 @@ func getActiveRegions(session *ec2.Client) ([]string, error) {
 }
 
 func main() {
+
+    fmt.Println("📡 Starting Merope AWS Scanner v1.0")
     scanID := fmt.Sprintf("SCAN-%d", time.Now().UnixNano())
 
     log.Println("🔌 Initializing AWS Session...")
@@ -509,35 +389,174 @@ func main() {
 }
 EOL
 
-# --- Build Go Scanner Module ---
-cd modules/scanner
-go mod init merope-scanner
-go mod tidy
+# --- Data Processor Module ---
+cat > modules/processor/main.py << 'EOL'
+from shared.kafka_utils import start_kafka_consumer
 
-cd "$PROJECT_ROOT/docker"
+def process_message(value):
+    print(f"[📥] Raw message: {value}")
+
+start_kafka_consumer("aws_scan_data", process_message)
+EOL
+
+cat > modules/processor/Dockerfile << 'EOL'
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "main.py"]
+EOL
+
+cat > modules/processor/requirements.txt << EOL
+confluent-kafka>=2.3.0
+protobuf>=4.21.12
+pandas>=2.2.0
+numpy>=1.26.4
+EOL
+
+# --- Model Engine Module ---
+cat > modules/model_engine/main.py << 'EOL'
+from shared.kafka_utils import start_kafka_consumer
+from sklearn.ensemble import IsolationForest
+import numpy as np
+
+def analyze(message):
+    scores = IsolationForest(n_estimators=100).score_samples([[len(m.get("Tags", []))] for m in message])
+    for i, score in enumerate(scores):
+        if score < -0.5:
+            print(f"🚩 Anomaly: {message[i]['resource_id']} | Score: {score}")
+
+start_kafka_consumer("processed_data", analyze)
+EOL
+
+cat > modules/model_engine/Dockerfile << 'EOL'
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "main.py"]
+EOL
+
+cat > modules/model_engine/requirements.txt << EOL
+scikit-learn>=1.4.0
+confluent-kafka>=2.3.0
+EOL
+
+# --- Notifier Module ---
+cat > modules/notifier/main.py << 'EOL'
+from shared.kafka_utils import start_kafka_consumer
+import requests
+
+GOOGLE_CHAT_WEBHOOK = ""
+
+def alert(message):
+    if GOOGLE_CHAT_WEBHOOK:
+        requests.post(GOOGLE_CHAT_WEBHOOK, json={"text": f"🚨 Orphaned resource found: {message}"})
+    print(f"🔔 Alert sent: {message}")
+
+start_kafka_consumer("model_output", alert)
+EOL
+
+cat > modules/notifier/Dockerfile << 'EOL'
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "main.py"]
+EOL
+
+cat > modules/notifier/requirements.txt << EOL
+requests>=2.32.0
+confluent-kafka>=2.3.0
+EOL
+
+# --- Storage Module ---
+cat > modules/storage/main.py << 'EOL'
+from shared.kafka_utils import start_kafka_consumer
+
+def persist_message(message):
+    print(f"[💾] Saving to DB: {message}")
+
+start_kafka_consumer("aws_scan_data", persist_message)
+EOL
+
+cat > modules/storage/Dockerfile << 'EOL'
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "main.py"]
+EOL
+
+cat > modules/storage/requirements.txt << EOL
+psycopg2-binary>=2.9.9
+redis>=4.6.0
+confluent-kafka>=2.3.0
+EOL
+
+# --- Build All Images ---
+echo "🏗️ Building Docker images..."
+
+cd docker
 sudo docker build -f Dockerfile.zookeeper -t merope-zookeeper ..
 sudo docker build -f Dockerfile.kafka -t merope-kafka ..
 
-cd "$PROJECT_ROOT/modules/scanner"
+cd ../modules/scanner
 sudo docker build -f Dockerfile.go -t merope-scanner .
 
-cd "$PROJECT_ROOT/modules/processor"
+cd ../processor
 sudo docker build -f Dockerfile -t merope-data-processor .
 
-cd "$PROJECT_ROOT/modules/model_engine"
+cd ../model_engine
 sudo docker build -f Dockerfile -t merope-model-engine .
 
-cd "$PROJECT_ROOT/modules/notifier"
+cd ../notifier
 sudo docker build -f Dockerfile -t merope-notifier .
 
-cd "$PROJECT_ROOT/modules/storage"
+cd ../storage
 sudo docker build -f Dockerfile -t merope-storage .
 
 # --- Create Docker network ---
 echo "🌐 Creating Docker network..."
 sudo docker network create merope-net || true
 
-# --- Start services ---
+# --- Start containers ---
 echo "🐋 Starting Zookeeper..."
 sudo docker run -d \
   --network merope-net \
@@ -602,7 +621,7 @@ sudo docker run -d \
   -v "$PROJECT_ROOT/logs/services/storage:/logs" \
   merope-storage
 
-# --- Final Output ---
+# --- Success! ---
 echo "🎉 Merope system deployed successfully!"
 echo "📄 Logs saved at:"
 echo "  $PROJECT_ROOT/logs/services/"

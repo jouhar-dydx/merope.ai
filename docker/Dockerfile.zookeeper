@@ -3,13 +3,10 @@ FROM zookeeper:3.9.2
 LABEL maintainer="Merope Team <dev@merope.com>"
 LABEL version="1.0"
 
-# Copy config
 COPY ../config/kafka/zookeeper.properties /conf/zoo.cfg
 
-# Create data dir with proper ownership
 RUN mkdir -p /bitnami/zookeeper/data && \
     chown -R zookeeper:zookeeper /bitnami/zookeeper/data
 
-# Set env vars
 ENV ZOOKEEPER_CLIENT_PORT=2181
 ENV ZOOKEEPER_DATA_DIR=/bitnami/zookeeper/data

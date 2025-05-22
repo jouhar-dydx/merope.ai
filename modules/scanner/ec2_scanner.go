@@ -77,7 +77,7 @@ func scanEC2Instances(scanID string) ([]Instance, error) {
                     Data:            instanceMap,
                     Orphaned:        isOrphaned(instanceMap),
                     PublicIP:        instance.PublicIpAddress != nil,
-                    MissingMetadata: map[string]bool{"tags_missing": instance.Tags == nil || len(instance.Tags) == 0},
+                    MissingMetadata: map[string]bool{"tags_missing": isOrphaned(instanceMap)},
                     AssociatedResources: map[string]interface{}{
                         "security_groups": instance.SecurityGroups,
                         "vpc_id":        instance.VpcId,
@@ -91,7 +91,6 @@ func scanEC2Instances(scanID string) ([]Instance, error) {
         }
     }
 
-    log.Printf("📦 Found %d running EC2 instances\n", len(results))
     return results, nil
 }
 
@@ -110,6 +109,7 @@ func sendToKafka(item Instance) {
 
     jsonData, _ := json.Marshal(item)
     deliveryChan := make(chan kafka.Event)
+
     err = p.Produce(&kafka.Message{
         TopicPartition: kafka.TopicPartition{Topic: "aws_scan_data", Partition: kafka.PartitionAny},
         Key:            []byte(item.ID),
@@ -140,6 +140,8 @@ func getActiveRegions(session *ec2.Client) ([]string, error) {
 }
 
 func main() {
+
+    fmt.Println("📡 Starting Merope AWS Scanner v1.0")
     scanID := fmt.Sprintf("SCAN-%d", time.Now().UnixNano())
 
     log.Println("🔌 Initializing AWS Session...")
