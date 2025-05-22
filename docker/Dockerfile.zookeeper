@@ -1,21 +1,14 @@
 FROM zookeeper:3.9.2
 
-LABEL maintainer="jouhar-dydx"
+LABEL maintainer="Merope Team <dev@merope.com>"
 LABEL version="1.0"
-
-# Set working dir
-WORKDIR /opt/zookeeper
 
 # Copy config
 COPY ../config/kafka/zookeeper.properties /conf/zoo.cfg
 
-# Create dataDir explicitly with correct permissions
+# Create data dir with proper ownership
 RUN mkdir -p /bitnami/zookeeper/data && \
-    chown -R zookeeper:zookeeper /bitnami/zookeeper/data && \
-    chmod -R 755 /bitnami/zookeeper/data
-
-# Set user
-USER zookeeper
+    chown -R zookeeper:zookeeper /bitnami/zookeeper/data
 
 # Set env vars
 ENV ZOOKEEPER_CLIENT_PORT=2181

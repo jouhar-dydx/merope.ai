@@ -1,4 +1,4 @@
-scikit-learn>=1.4.0
-xgboost>=2.1.0
 pandas>=2.2.0
+numpy>=1.26.4
 confluent-kafka>=2.3.0
+protobuf>=4.21.12

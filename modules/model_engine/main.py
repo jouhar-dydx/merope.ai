@@ -1,33 +1,11 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
-import logging
-import os
+from shared.kafka_utils import start_kafka_consumer
+from sklearn.ensemble import IsolationForest
+import numpy as np
 
-class SimpleServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/healthz':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "healthy", "module": "model_engine"}).encode())
-        else:
-            self.send_response(404)
+def analyze(message):
+    scores = IsolationForest(n_estimators=100).score_samples([[len(m.get("Tags", []))] for m in message])
+    for i, score in enumerate(scores):
+        if score < -0.5:
+            print(f"🚩 Anomaly: {message[i]['resource_id']} | Score: {score}")
 
-logger = logging.getLogger("ModelEngine")
-logger.setLevel(logging.INFO)
-
-log_dir = "/logs/merope"
-os.makedirs(log_dir, exist_ok=True)
-
-file_handler = logging.FileHandler(os.path.join(log_dir, "model_engine.log"))
-file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-logger.addHandler(file_handler)
-
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(file_handler.formatter)
-logger.addHandler(console_handler)
-
-if __name__ == "__main__":
-    print("Starting Model Engine Service...")
-    server = HTTPServer(('0.0.0.0', 8080), SimpleServer)
-    server.serve_forever()
+start_kafka_consumer("processed_data", analyze)

@@ -1,2 +1,2 @@
-scikit-learn>=1.4.0
+requests>=2.32.0
 confluent-kafka>=2.3.0

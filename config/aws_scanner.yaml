@@ -1,0 +1,6 @@
+scan_id: "SCAN-{uuid}-{timestamp}"
+regions: auto
+services:
+  - ec2
+  - rds
+  - lambda
