@@ -9,8 +9,8 @@ RUN apt-get update && \
 COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY ../shared /app/shared
 
-EXPOSE 8080
+COPY . .
 
 CMD ["python", "main.py"]

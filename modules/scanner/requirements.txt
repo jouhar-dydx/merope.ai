@@ -1,0 +1,4 @@
+boto3>=1.34.0
+confluent-kafka>=2.3.0
+protobuf>=4.21.12
+pyyaml>=6.0

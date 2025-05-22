@@ -8,4 +8,4 @@ def analyze(message):
         if score < -0.5:
             print(f"🚩 Anomaly: {message[i]['resource_id']} | Score: {score}")
 
-start_kafka_consumer("processed_data", analyze)
+start_kafka_consumer(PROCESSED_TOPIC, analyze)

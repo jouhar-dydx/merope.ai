@@ -10,5 +10,7 @@ COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+COPY ../shared /app/shared
+
 
 CMD ["python", "main.py"]

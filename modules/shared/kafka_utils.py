@@ -2,7 +2,7 @@ from confluent_kafka import Producer, Consumer
 
 KAFKA_BOOTSTRAP_SERVER = "kafka:9092"
 SCAN_TOPIC = "aws_scan_data"
-PROCESS_TOPIC = "processed_data"
+PROCESSED_TOPIC = "processed_data"
 MODEL_TOPIC = "model_output"
 NOTIFIER_TOPIC = "alerts"
 
